@@ -18,24 +18,8 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     content,
     tags,
-    content=memories,
-    content_rowid=rowid,
     tokenize='porter unicode61'
 );
-
--- Triggers to keep FTS in sync
-CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-    INSERT INTO memories_fts(rowid, content, tags) VALUES (new.rowid, new.content, new.tags);
-END;
-
-CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, content, tags) VALUES ('delete', old.rowid, old.content, old.tags);
-END;
-
-CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, content, tags) VALUES ('delete', old.rowid, old.content, old.tags);
-    INSERT INTO memories_fts(rowid, content, tags) VALUES (new.rowid, new.content, new.tags);
-END;
 
 CREATE TABLE IF NOT EXISTS entities (
     id TEXT PRIMARY KEY,
@@ -63,6 +47,3 @@ CREATE TABLE IF NOT EXISTS relations (
 
 CREATE INDEX IF NOT EXISTS idx_relations_from ON relations(from_entity);
 CREATE INDEX IF NOT EXISTS idx_relations_to ON relations(to_entity);
-
--- FTS triggers must be in the same connection; create them separately in Go
--- because FTS5 virtual tables need special handling via go-sqlite3.

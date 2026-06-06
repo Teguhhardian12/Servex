@@ -60,8 +60,11 @@ func nanoid() string {
 	const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	b := make([]byte, 21)
 	for i := range b {
-		b[i] = alphabet[time.Now().UnixNano()%int64(len(alphabet))+int64(i)*37%int64(len(alphabet))]
-		time.Sleep(0) // ensure different nanoseconds
+		idx := (time.Now().UnixNano() + int64(i)*37) % int64(len(alphabet))
+		if idx < 0 {
+			idx = -idx
+		}
+		b[i] = alphabet[idx]
 	}
 	return string(b)
 }
@@ -73,13 +76,32 @@ func (s *Store) CreateMemory(content, memType, category string, tags []string, i
 	tagsJSON, _ := json.Marshal(tags)
 	emb := computeEmbedding(content, tags)
 
-	_, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
 		`INSERT INTO memories (id, content, type, category, tags, importance, embedding, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, content, memType, category, string(tagsJSON), importance, emb, now, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert memory: %w", err)
+	}
+
+	// Sync FTS index
+	_, err = tx.Exec(
+		`INSERT INTO memories_fts(rowid, content, tags) SELECT rowid, content, tags FROM memories WHERE id = ?`,
+		id,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("fts insert: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
 	return &types.Memory{
@@ -103,7 +125,7 @@ func (s *Store) GetMemory(id string) (*types.Memory, error) {
 	return scanMemory(row)
 }
 
-// UpdateMemory patches a memory's content and/or tags, recomputing embedding if needed.
+// UpdateMemory patches a memory's content and/or tags, recomputing embedding and FTS.
 func (s *Store) UpdateMemory(id string, content *string, tags *[]string) (*types.Memory, error) {
 	now := time.Now().UnixMilli()
 	if content != nil {
@@ -119,22 +141,32 @@ func (s *Store) UpdateMemory(id string, content *string, tags *[]string) (*types
 			return nil, err
 		}
 	}
-	// Recompute embedding
 	if content != nil || tags != nil {
+		// Recompute embedding
 		m, err := s.GetMemory(id)
 		if err != nil {
 			return nil, err
 		}
 		emb := computeEmbedding(m.Content, m.Tags)
 		s.db.Exec(`UPDATE memories SET embedding = ? WHERE id = ?`, emb, id)
+
+		// Re-sync FTS index
+		s.db.Exec(`DELETE FROM memories_fts WHERE rowid IN (SELECT rowid FROM memories WHERE id = ?)`, id)
+		s.db.Exec(`INSERT INTO memories_fts(rowid, content, tags) SELECT rowid, content, tags FROM memories WHERE id = ?`, id)
 	}
 	return s.GetMemory(id)
 }
 
-// DeleteMemory soft-deletes a memory.
+// DeleteMemory soft-deletes a memory and removes from FTS index.
 func (s *Store) DeleteMemory(id string) error {
 	now := time.Now().UnixMilli()
-	_, err := s.db.Exec(`UPDATE memories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`, now, id)
+	_, err := s.db.Exec(
+		`DELETE FROM memories_fts WHERE rowid IN (SELECT rowid FROM memories WHERE id = ?)`, id,
+	)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE memories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`, now, id)
 	return err
 }
 
