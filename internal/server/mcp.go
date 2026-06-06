@@ -44,9 +44,10 @@ func registerMemoryTools(s *server.MCPServer, store *memory.Store) {
 	// memory_search
 	s.AddTool(
 		mcp.NewTool("memory_search",
-			mcp.WithDescription("Search memories using full-text search (FTS5)"),
+			mcp.WithDescription("Search memories using hybrid search (FTS5 keyword + vector semantic, fused with RRF)"),
 			mcp.WithString("query", mcp.Required(), mcp.Description("Search query")),
 			mcp.WithNumber("limit", mcp.Description("Max results (default: 10)")),
+			mcp.WithString("mode", mcp.Description("Search mode: hybrid (default), keyword (FTS5 only), semantic (vector only)")),
 			mcp.WithString("type_filter", mcp.Description("Filter by memory type")),
 			mcp.WithString("tag_filter", mcp.Description("Filter by tag")),
 		),
@@ -177,10 +178,20 @@ func handleMemorySearch(store *memory.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query, _ := req.RequireString("query")
 		limit := int(req.GetFloat("limit", 10))
+		mode := req.GetString("mode", "hybrid")
 		typeFilter := req.GetString("type_filter", "")
 		tagFilter := req.GetString("tag_filter", "")
 
-		results, err := store.SearchMemory(query, limit, typeFilter, tagFilter)
+		// For keyword-only with filters, use the original FTS5 search
+		if mode == "keyword" && (typeFilter != "" || tagFilter != "") {
+			results, err := store.SearchMemory(query, limit, typeFilter, tagFilter)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return jsonResult(results)
+		}
+
+		results, err := store.SearchMemoryHybrid(query, limit, mode, typeFilter, tagFilter)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

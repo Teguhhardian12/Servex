@@ -71,11 +71,12 @@ func (s *Store) CreateMemory(content, memType, category string, tags []string, i
 	now := time.Now().UnixMilli()
 	id := nanoid()
 	tagsJSON, _ := json.Marshal(tags)
+	emb := computeEmbedding(content, tags)
 
 	_, err := s.db.Exec(
-		`INSERT INTO memories (id, content, type, category, tags, importance, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, content, memType, category, string(tagsJSON), importance, now, now,
+		`INSERT INTO memories (id, content, type, category, tags, importance, embedding, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, content, memType, category, string(tagsJSON), importance, emb, now, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert memory: %w", err)
@@ -102,7 +103,7 @@ func (s *Store) GetMemory(id string) (*types.Memory, error) {
 	return scanMemory(row)
 }
 
-// UpdateMemory patches a memory's content and/or tags.
+// UpdateMemory patches a memory's content and/or tags, recomputing embedding if needed.
 func (s *Store) UpdateMemory(id string, content *string, tags *[]string) (*types.Memory, error) {
 	now := time.Now().UnixMilli()
 	if content != nil {
@@ -117,6 +118,15 @@ func (s *Store) UpdateMemory(id string, content *string, tags *[]string) (*types
 		if err != nil {
 			return nil, err
 		}
+	}
+	// Recompute embedding
+	if content != nil || tags != nil {
+		m, err := s.GetMemory(id)
+		if err != nil {
+			return nil, err
+		}
+		emb := computeEmbedding(m.Content, m.Tags)
+		s.db.Exec(`UPDATE memories SET embedding = ? WHERE id = ?`, emb, id)
 	}
 	return s.GetMemory(id)
 }
