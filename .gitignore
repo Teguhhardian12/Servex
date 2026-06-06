@@ -1,0 +1,6 @@
+servex
+*.db
+*.db-wal
+*.db-shm
+.env
+data/
