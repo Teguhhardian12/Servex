@@ -1,6 +1,6 @@
 # Servex
 
-**AI Memory Server (MCP Compatible)** — Persistent memory and knowledge graph for AI agents.
+**AI Memory Server (MCP Compatible)** Persistent memory and knowledge graph for AI agents.
 
 A single Go binary that gives any MCP-compatible AI tool (Claude Code, Cursor, Continue, etc.) the ability to remember, search, and reason over persistent knowledge. Zero model downloads. Zero external services. Works fully offline.
 
